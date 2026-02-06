@@ -1,0 +1,28 @@
+{
+    "node": "n8n-nodes-base.nanonetsOcr",
+    "nodeVersion": "1.0",
+    "codexVersion": "1.0",
+    "categories": [
+        "Productivity",
+        "Data & Storage"
+    ],
+    "resources": {
+        "credentialDocumentation": [
+            {
+                "url": "https://docstrange.nanonets.com/docs"
+            }
+        ],
+        "primaryDocumentation": [
+            {
+                "url": "https://docstrange.nanonets.com/docs"
+            }
+        ]
+    },
+    "alias": [
+        "document",
+        "extraction",
+        "ocr",
+        "pdf",
+        "invoice"
+    ]
+}

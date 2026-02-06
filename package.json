@@ -1,0 +1,57 @@
+{
+    "name": "n8n-nodes-nanonets",
+    "version": "0.1.0",
+    "description": "n8n node to integrate with Nanonets Document Extraction API for automated document processing",
+    "keywords": [
+        "n8n-community-node-package",
+        "n8n",
+        "nanonets",
+        "document-extraction",
+        "ocr",
+        "pdf"
+    ],
+    "license": "MIT",
+    "homepage": "https://nanonets.com",
+    "author": {
+        "name": "Nanonets",
+        "email": "support@nanonets.com"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/nanonets/n8n-nodes-nanonets.git"
+    },
+    "main": "index.js",
+    "scripts": {
+        "build": "tsc && gulp build:icons",
+        "dev": "tsc --watch",
+        "format": "prettier nodes credentials --write",
+        "lint": "eslint nodes credentials package.json --ext .ts",
+        "lintfix": "eslint nodes credentials package.json --fix --ext .ts",
+        "prepublishOnly": "npm run build"
+    },
+    "files": [
+        "dist"
+    ],
+    "n8n": {
+        "n8nNodesApiVersion": 1,
+        "credentials": [
+            "dist/credentials/NanonetsApi.credentials.js"
+        ],
+        "nodes": [
+            "dist/nodes/NanonetsOCR/NanonetsOCR.node.js"
+        ]
+    },
+    "devDependencies": {
+        "@types/node": "^25.2.1",
+        "@typescript-eslint/parser": "^7.15.0",
+        "eslint": "^8.56.0",
+        "eslint-plugin-n8n-nodes-base": "^1.16.6",
+        "gulp": "^4.0.2",
+        "n8n-workflow": "*",
+        "prettier": "^3.3.2",
+        "typescript": "^5.5.3"
+    },
+    "peerDependencies": {
+        "n8n-workflow": "*"
+    }
+}
