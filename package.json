@@ -18,7 +18,7 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/nanonets/n8n-nodes-nanonets.git"
+        "url": "git+https://github.com/NanoNets/n8n-nodes-nanonets.git"
     },
     "main": "index.js",
     "scripts": {
