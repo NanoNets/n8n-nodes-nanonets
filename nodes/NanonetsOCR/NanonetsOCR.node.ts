@@ -6,6 +6,7 @@ import {
     INodeTypeDescription,
     NodeOperationError,
 } from 'n8n-workflow';
+import FormData from 'form-data';
 
 export class NanonetsOCR implements INodeType {
     description: INodeTypeDescription = {
@@ -589,14 +590,19 @@ export class NanonetsOCR implements INodeType {
 
         // Helper to build formData with file
         const buildFormData = (fileData: any, additionalData: IDataObject = {}) => {
-            const formData: IDataObject = { ...additionalData };
+            const formData = new FormData();
+
+            // Add additionalData fields
+            for (const key of Object.keys(additionalData)) {
+                if (additionalData[key] !== undefined) {
+                    formData.append(key, additionalData[key]);
+                }
+            }
+
             if (fileData.type === 'url') {
-                formData.file_url = fileData.url;
+                formData.append('file_url', fileData.url);
             } else {
-                formData.file = {
-                    value: fileData.value,
-                    options: fileData.options,
-                };
+                formData.append('file', fileData.value, fileData.options);
             }
             return formData;
         };
@@ -628,11 +634,11 @@ export class NanonetsOCR implements INodeType {
                         });
 
                         const metadata = buildMetadata(additionalFields);
-                        if (metadata) formData.include_metadata = metadata;
+                        if (metadata) formData.append('include_metadata', metadata);
 
-                        const response = await this.helpers.requestWithAuthentication.call(
+                        const response = await this.helpers.httpRequestWithAuthentication.call(
                             this, 'nanonetsApi',
-                            { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/extract/sync', formData, json: true },
+                            { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/extract/sync', body: formData, json: true },
                         );
 
                         returnData.push({ json: response as IDataObject, pairedItem: { item: i } });
@@ -652,9 +658,9 @@ export class NanonetsOCR implements INodeType {
                             ...(additionalFields.customInstructions && { custom_instructions: additionalFields.customInstructions }),
                         });
 
-                        const response = await this.helpers.requestWithAuthentication.call(
+                        const response = await this.helpers.httpRequestWithAuthentication.call(
                             this, 'nanonetsApi',
-                            { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/extract/async', formData, json: true },
+                            { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/extract/async', body: formData, json: true },
                         );
 
                         returnData.push({ json: response as IDataObject, pairedItem: { item: i } });
@@ -671,21 +677,20 @@ export class NanonetsOCR implements INodeType {
                             const urlsText = this.getNodeParameter('fileUrls', 0) as string;
                             const urls = urlsText.split('\n').map(u => u.trim()).filter(u => u);
 
-                            const formData: IDataObject = {
-                                output_format: outputFormat,
-                                ...(additionalFields.jsonOptions && { json_options: additionalFields.jsonOptions }),
-                                ...(additionalFields.csvOptions && { csv_options: additionalFields.csvOptions }),
-                                ...(additionalFields.promptMode && { prompt_mode: additionalFields.promptMode }),
-                                ...(additionalFields.customInstructions && { custom_instructions: additionalFields.customInstructions }),
-                            };
+                            const formData = new FormData();
+                            formData.append('output_format', outputFormat);
+                            if (additionalFields.jsonOptions) formData.append('json_options', additionalFields.jsonOptions);
+                            if (additionalFields.csvOptions) formData.append('csv_options', additionalFields.csvOptions);
+                            if (additionalFields.promptMode) formData.append('prompt_mode', additionalFields.promptMode);
+                            if (additionalFields.customInstructions) formData.append('custom_instructions', additionalFields.customInstructions);
 
 
                             // Add URLs as array
-                            formData.urls = JSON.stringify(urls);
+                            formData.append('urls', JSON.stringify(urls));
 
-                            const response = await this.helpers.requestWithAuthentication.call(
+                            const response = await this.helpers.httpRequestWithAuthentication.call(
                                 this, 'nanonetsApi',
-                                { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/extract/batch', formData, json: true },
+                                { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/extract/batch', body: formData, json: true },
                             );
 
                             returnData.push({ json: response as IDataObject, pairedItem: { item: 0 } });
@@ -710,14 +715,15 @@ export class NanonetsOCR implements INodeType {
                                 }
                             }
 
-                            const formData: IDataObject = {
-                                output_format: outputFormat,
-                                files,
-                            };
+                            const formData = new FormData();
+                            formData.append('output_format', outputFormat);
+                            for (const f of files) {
+                                formData.append('files', f.value, f.options);
+                            }
 
-                            const response = await this.helpers.requestWithAuthentication.call(
+                            const response = await this.helpers.httpRequestWithAuthentication.call(
                                 this, 'nanonetsApi',
-                                { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/extract/batch', formData, json: true },
+                                { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/extract/batch', body: formData, json: true },
                             );
 
                             returnData.push({ json: response as IDataObject, pairedItem: { item: 0 } });
@@ -728,7 +734,7 @@ export class NanonetsOCR implements INodeType {
                     if (operation === 'getResult') {
                         const recordId = this.getNodeParameter('recordId', i) as string;
 
-                        const response = await this.helpers.requestWithAuthentication.call(
+                        const response = await this.helpers.httpRequestWithAuthentication.call(
                             this, 'nanonetsApi',
                             { method: 'GET', url: `https://extraction-api.nanonets.com/api/v1/extract/results/${recordId}`, json: true },
                         );
@@ -746,7 +752,7 @@ export class NanonetsOCR implements INodeType {
                             sort_order: listOptions.sortOrder || 'desc',
                         };
 
-                        const response = await this.helpers.requestWithAuthentication.call(
+                        const response = await this.helpers.httpRequestWithAuthentication.call(
                             this, 'nanonetsApi',
                             { method: 'GET', url: 'https://extraction-api.nanonets.com/api/v1/extract/results', qs, json: true },
                         );
@@ -784,9 +790,9 @@ export class NanonetsOCR implements INodeType {
                             categories: JSON.stringify(categories),
                         });
 
-                        const response = await this.helpers.requestWithAuthentication.call(
+                        const response = await this.helpers.httpRequestWithAuthentication.call(
                             this, 'nanonetsApi',
-                            { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/classify/sync', formData, json: true },
+                            { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/classify/sync', body: formData, json: true },
                         );
 
                         returnData.push({ json: response as IDataObject, pairedItem: { item: i } });
@@ -813,14 +819,15 @@ export class NanonetsOCR implements INodeType {
                             }
                         }
 
-                        const formData: IDataObject = {
-                            categories: JSON.stringify(categories),
-                            files,
-                        };
+                        const formData = new FormData();
+                        formData.append('categories', JSON.stringify(categories));
+                        for (const f of files) {
+                            formData.append('files', f.value, f.options);
+                        }
 
-                        const response = await this.helpers.requestWithAuthentication.call(
+                        const response = await this.helpers.httpRequestWithAuthentication.call(
                             this, 'nanonetsApi',
-                            { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/classify/batch', formData, json: true },
+                            { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/classify/batch', body: formData, json: true },
                         );
 
                         returnData.push({ json: response as IDataObject, pairedItem: { item: 0 } });
@@ -867,7 +874,7 @@ export class NanonetsOCR implements INodeType {
                             stream: false,
                         };
 
-                        const response = await this.helpers.requestWithAuthentication.call(
+                        const response = await this.helpers.httpRequestWithAuthentication.call(
                             this, 'nanonetsApi',
                             {
                                 method: 'POST',

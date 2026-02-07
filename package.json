@@ -43,6 +43,7 @@
         ]
     },
     "devDependencies": {
+        "@types/form-data": "^2.2.1",
         "@types/node": "^25.2.1",
         "@typescript-eslint/parser": "^7.15.0",
         "eslint": "^8.56.0",
@@ -54,5 +55,8 @@
     },
     "peerDependencies": {
         "n8n-workflow": "*"
+    },
+    "dependencies": {
+        "form-data": "^4.0.5"
     }
 }
