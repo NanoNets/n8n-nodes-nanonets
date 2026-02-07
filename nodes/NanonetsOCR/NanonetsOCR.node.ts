@@ -547,24 +547,66 @@ export class NanonetsOCR implements INodeType {
         const resource = this.getNodeParameter('resource', 0) as string;
         const operation = this.getNodeParameter('operation', 0) as string;
 
+        // Multipart field: either a text field or a binary file field
+        type MultipartField =
+            | { name: string; value: string }
+            | { name: string; value: Buffer; filename: string; contentType: string };
+
+        // Build multipart/form-data body as a Buffer (zero external dependencies)
+        const buildMultipart = (fields: MultipartField[]) => {
+            const boundary = '----n8nBoundary' + Math.random().toString(36).substring(2);
+            const parts: Buffer[] = [];
+            for (const field of fields) {
+                if ('filename' in field) {
+                    parts.push(Buffer.from(
+                        `--${boundary}\r\nContent-Disposition: form-data; name="${field.name}"; filename="${field.filename}"\r\nContent-Type: ${field.contentType}\r\n\r\n`,
+                    ));
+                    parts.push(field.value);
+                    parts.push(Buffer.from('\r\n'));
+                } else {
+                    parts.push(Buffer.from(
+                        `--${boundary}\r\nContent-Disposition: form-data; name="${field.name}"\r\n\r\n${field.value}\r\n`,
+                    ));
+                }
+            }
+            parts.push(Buffer.from(`--${boundary}--\r\n`));
+            return {
+                body: Buffer.concat(parts),
+                contentType: `multipart/form-data; boundary=${boundary}`,
+            };
+        };
+
+        // POST with multipart form data
+        const multipartPost = async (url: string, fields: MultipartField[]) => {
+            const { body, contentType } = buildMultipart(fields);
+            return this.helpers.httpRequestWithAuthentication.call(
+                this, 'nanonetsApi',
+                {
+                    method: 'POST',
+                    url,
+                    body,
+                    headers: { 'Content-Type': contentType },
+                    json: true,
+                },
+            );
+        };
+
         // Helper to get file data based on input type
         const getFileData = async (i: number, inputTypeParam = 'inputType') => {
             const inputType = this.getNodeParameter(inputTypeParam, i) as string;
 
             if (inputType === 'url') {
                 const fileUrl = this.getNodeParameter('fileUrl', i) as string;
-                return { type: 'url', url: fileUrl };
+                return { type: 'url' as const, url: fileUrl };
             } else if (inputType === 'binary') {
                 const binaryPropertyName = this.getNodeParameter('binaryPropertyName', i) as string;
                 const binaryData = this.helpers.assertBinaryData(i, binaryPropertyName);
                 const buffer = await this.helpers.getBinaryDataBuffer(i, binaryPropertyName);
                 return {
-                    type: 'file',
+                    type: 'file' as const,
                     value: buffer,
-                    options: {
-                        filename: binaryData.fileName || 'document.pdf',
-                        contentType: binaryData.mimeType || 'application/pdf',
-                    },
+                    filename: binaryData.fileName || 'document.pdf',
+                    contentType: binaryData.mimeType || 'application/pdf',
                 };
             } else if (inputType === 'base64') {
                 const base64Content = this.getNodeParameter('base64Content', i) as string;
@@ -576,30 +618,26 @@ export class NanonetsOCR implements INodeType {
                     jpeg: 'image/jpeg', tiff: 'image/tiff', tif: 'image/tiff',
                 };
                 return {
-                    type: 'file',
+                    type: 'file' as const,
                     value: base64Buffer,
-                    options: {
-                        filename: fileName,
-                        contentType: mimeTypes[ext] || 'application/octet-stream',
-                    },
+                    filename: fileName,
+                    contentType: mimeTypes[ext] || 'application/octet-stream',
                 };
             }
             throw new NodeOperationError(this.getNode(), 'Invalid input type');
         };
 
-        // Helper to build formData with file
-        const buildFormData = (fileData: any, additionalData: IDataObject = {}) => {
-            const formData: IDataObject = { ...additionalData };
-
+        // Convert file data to multipart fields
+        const fileToFields = (fileData: { type: 'url'; url: string } | { type: 'file'; value: Buffer; filename: string; contentType: string }): MultipartField[] => {
             if (fileData.type === 'url') {
-                formData.file_url = fileData.url;
-            } else {
-                formData.file = {
-                    value: fileData.value,
-                    options: fileData.options,
-                };
+                return [{ name: 'file_url', value: fileData.url }];
             }
-            return formData;
+            return [{
+                name: 'file',
+                value: fileData.value,
+                filename: fileData.filename,
+                contentType: fileData.contentType,
+            }];
         };
 
         // Helper for metadata options
@@ -608,6 +646,20 @@ export class NanonetsOCR implements INodeType {
             if (additionalFields.includeBoundingBoxes) metadataOptions.push('bounding_boxes');
             if (additionalFields.includeConfidenceScore) metadataOptions.push('confidence_score');
             return metadataOptions.length > 0 ? metadataOptions.join(',') : undefined;
+        };
+
+        // Build common extraction option fields
+        const extractionFields = (outputFormat: string, additionalFields: IDataObject): MultipartField[] => {
+            const fields: MultipartField[] = [
+                { name: 'output_format', value: outputFormat },
+            ];
+            if (additionalFields.jsonOptions) fields.push({ name: 'json_options', value: additionalFields.jsonOptions as string });
+            if (additionalFields.csvOptions) fields.push({ name: 'csv_options', value: additionalFields.csvOptions as string });
+            if (additionalFields.promptMode) fields.push({ name: 'prompt_mode', value: additionalFields.promptMode as string });
+            if (additionalFields.customInstructions) fields.push({ name: 'custom_instructions', value: additionalFields.customInstructions as string });
+            const metadata = buildMetadata(additionalFields);
+            if (metadata) fields.push({ name: 'include_metadata', value: metadata });
+            return fields;
         };
 
         for (let i = 0; i < items.length; i++) {
@@ -620,22 +672,14 @@ export class NanonetsOCR implements INodeType {
                         const outputFormat = this.getNodeParameter('outputFormat', i) as string;
                         const additionalFields = this.getNodeParameter('additionalFields', i) as IDataObject;
 
-                        const formData = buildFormData(fileData, {
-                            output_format: outputFormat,
-                            ...(additionalFields.jsonOptions && { json_options: additionalFields.jsonOptions }),
-                            ...(additionalFields.csvOptions && { csv_options: additionalFields.csvOptions }),
-                            ...(additionalFields.promptMode && { prompt_mode: additionalFields.promptMode }),
-                            ...(additionalFields.customInstructions && { custom_instructions: additionalFields.customInstructions }),
-                        });
+                        const fields: MultipartField[] = [
+                            ...extractionFields(outputFormat, additionalFields),
+                            ...fileToFields(fileData),
+                        ];
 
-                        const metadata = buildMetadata(additionalFields);
-                        if (metadata) formData.include_metadata = metadata;
-
-                        const response = await this.helpers.httpRequestWithAuthentication.call(
-                            this, 'nanonetsApi',
-                            { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/extract/sync', formData, json: true },
+                        const response = await multipartPost(
+                            'https://extraction-api.nanonets.com/api/v1/extract/sync', fields,
                         );
-
                         returnData.push({ json: response as IDataObject, pairedItem: { item: i } });
                     }
 
@@ -645,19 +689,14 @@ export class NanonetsOCR implements INodeType {
                         const outputFormat = this.getNodeParameter('outputFormat', i) as string;
                         const additionalFields = this.getNodeParameter('additionalFields', i) as IDataObject;
 
-                        const formData = buildFormData(fileData, {
-                            output_format: outputFormat,
-                            ...(additionalFields.jsonOptions && { json_options: additionalFields.jsonOptions }),
-                            ...(additionalFields.csvOptions && { csv_options: additionalFields.csvOptions }),
-                            ...(additionalFields.promptMode && { prompt_mode: additionalFields.promptMode }),
-                            ...(additionalFields.customInstructions && { custom_instructions: additionalFields.customInstructions }),
-                        });
+                        const fields: MultipartField[] = [
+                            ...extractionFields(outputFormat, additionalFields),
+                            ...fileToFields(fileData),
+                        ];
 
-                        const response = await this.helpers.httpRequestWithAuthentication.call(
-                            this, 'nanonetsApi',
-                            { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/extract/async', formData, json: true },
+                        const response = await multipartPost(
+                            'https://extraction-api.nanonets.com/api/v1/extract/async', fields,
                         );
-
                         returnData.push({ json: response as IDataObject, pairedItem: { item: i } });
                     }
 
@@ -668,59 +707,42 @@ export class NanonetsOCR implements INodeType {
                         const additionalFields = this.getNodeParameter('additionalFields', 0) as IDataObject;
 
                         if (inputType === 'url') {
-                            // URL batch - get URLs from text field
                             const urlsText = this.getNodeParameter('fileUrls', 0) as string;
                             const urls = urlsText.split('\n').map(u => u.trim()).filter(u => u);
 
-                            const formData: IDataObject = {
-                                output_format: outputFormat,
-                                ...(additionalFields.jsonOptions && { json_options: additionalFields.jsonOptions }),
-                                ...(additionalFields.csvOptions && { csv_options: additionalFields.csvOptions }),
-                                ...(additionalFields.promptMode && { prompt_mode: additionalFields.promptMode }),
-                                ...(additionalFields.customInstructions && { custom_instructions: additionalFields.customInstructions }),
-                            };
+                            const fields: MultipartField[] = [
+                                ...extractionFields(outputFormat, additionalFields),
+                                { name: 'urls', value: JSON.stringify(urls) },
+                            ];
 
-
-                            // Add URLs as array
-                            formData.urls = JSON.stringify(urls);
-
-                            const response = await this.helpers.httpRequestWithAuthentication.call(
-                                this, 'nanonetsApi',
-                                { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/extract/batch', formData, json: true },
+                            const response = await multipartPost(
+                                'https://extraction-api.nanonets.com/api/v1/extract/batch', fields,
                             );
-
                             returnData.push({ json: response as IDataObject, pairedItem: { item: 0 } });
                         } else if (inputType === 'binary') {
-                            // Binary batch - collect files from all items
                             const binaryPropertyName = this.getNodeParameter('binaryPropertyName', 0) as string;
-                            const files: any[] = [];
+                            const fields: MultipartField[] = [
+                                { name: 'output_format', value: outputFormat },
+                            ];
 
                             for (let j = 0; j < Math.min(items.length, 50); j++) {
                                 try {
                                     const binaryData = this.helpers.assertBinaryData(j, binaryPropertyName);
                                     const buffer = await this.helpers.getBinaryDataBuffer(j, binaryPropertyName);
-                                    files.push({
+                                    fields.push({
+                                        name: 'files',
                                         value: buffer,
-                                        options: {
-                                            filename: binaryData.fileName || `document_${j}.pdf`,
-                                            contentType: binaryData.mimeType || 'application/pdf',
-                                        },
+                                        filename: binaryData.fileName || `document_${j}.pdf`,
+                                        contentType: binaryData.mimeType || 'application/pdf',
                                     });
                                 } catch {
                                     // Skip items without binary data
                                 }
                             }
 
-                            const formData: IDataObject = {
-                                output_format: outputFormat,
-                                files,
-                            };
-
-                            const response = await this.helpers.httpRequestWithAuthentication.call(
-                                this, 'nanonetsApi',
-                                { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/extract/batch', formData, json: true },
+                            const response = await multipartPost(
+                                'https://extraction-api.nanonets.com/api/v1/extract/batch', fields,
                             );
-
                             returnData.push({ json: response as IDataObject, pairedItem: { item: 0 } });
                         }
                     }
@@ -758,7 +780,6 @@ export class NanonetsOCR implements INodeType {
 
                 // ==================== CLASSIFICATION OPERATIONS ====================
                 if (resource === 'classification') {
-                    // Get categories
                     const categoriesData = this.getNodeParameter('categories', i) as { categoryValues?: Array<{ name: string; description?: string }> };
                     const categories = (categoriesData.categoryValues || []).map(c => ({
                         name: c.name,
@@ -767,63 +788,51 @@ export class NanonetsOCR implements INodeType {
 
                     // Classify (Sync)
                     if (operation === 'classifySync') {
-                        // For classification, we force binary input
                         const binaryPropertyName = this.getNodeParameter('binaryPropertyName', i) as string;
                         const binaryData = this.helpers.assertBinaryData(i, binaryPropertyName);
                         const buffer = await this.helpers.getBinaryDataBuffer(i, binaryPropertyName);
 
-                        const fileData = {
-                            type: 'file',
-                            value: buffer,
-                            options: {
+                        const fields: MultipartField[] = [
+                            { name: 'categories', value: JSON.stringify(categories) },
+                            {
+                                name: 'file',
+                                value: buffer,
                                 filename: binaryData.fileName || 'document.pdf',
                                 contentType: binaryData.mimeType || 'application/pdf',
                             },
-                        };
+                        ];
 
-                        const formData = buildFormData(fileData, {
-                            categories: JSON.stringify(categories),
-                        });
-
-                        const response = await this.helpers.httpRequestWithAuthentication.call(
-                            this, 'nanonetsApi',
-                            { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/classify/sync', formData, json: true },
+                        const response = await multipartPost(
+                            'https://extraction-api.nanonets.com/api/v1/classify/sync', fields,
                         );
-
                         returnData.push({ json: response as IDataObject, pairedItem: { item: i } });
                     }
 
                     // Classify (Batch) - processes all items at once, only runs on first item
                     if (operation === 'classifyBatch' && i === 0) {
                         const binaryPropertyName = this.getNodeParameter('binaryPropertyName', 0) as string;
-                        const files: any[] = [];
+                        const fields: MultipartField[] = [
+                            { name: 'categories', value: JSON.stringify(categories) },
+                        ];
 
                         for (let j = 0; j < Math.min(items.length, 50); j++) {
                             try {
                                 const binaryData = this.helpers.assertBinaryData(j, binaryPropertyName);
                                 const buffer = await this.helpers.getBinaryDataBuffer(j, binaryPropertyName);
-                                files.push({
+                                fields.push({
+                                    name: 'files',
                                     value: buffer,
-                                    options: {
-                                        filename: binaryData.fileName || `document_${j}.pdf`,
-                                        contentType: binaryData.mimeType || 'application/pdf',
-                                    },
+                                    filename: binaryData.fileName || `document_${j}.pdf`,
+                                    contentType: binaryData.mimeType || 'application/pdf',
                                 });
                             } catch {
                                 // Skip items without binary data
                             }
                         }
 
-                        const formData: IDataObject = {
-                            categories: JSON.stringify(categories),
-                            files,
-                        };
-
-                        const response = await this.helpers.httpRequestWithAuthentication.call(
-                            this, 'nanonetsApi',
-                            { method: 'POST', url: 'https://extraction-api.nanonets.com/api/v1/classify/batch', formData, json: true },
+                        const response = await multipartPost(
+                            'https://extraction-api.nanonets.com/api/v1/classify/batch', fields,
                         );
-
                         returnData.push({ json: response as IDataObject, pairedItem: { item: 0 } });
                     }
                 }
@@ -862,7 +871,7 @@ export class NanonetsOCR implements INodeType {
                         // Add text message
                         content.push({ type: 'text', text: message });
 
-                        const body = {
+                        const chatBody = {
                             model,
                             messages: [{ role: 'user', content }],
                             stream: false,
@@ -873,7 +882,7 @@ export class NanonetsOCR implements INodeType {
                             {
                                 method: 'POST',
                                 url: 'https://extraction-api.nanonets.com/v1/chat/completions',
-                                body,
+                                body: chatBody,
                                 json: true,
                             },
                         );
