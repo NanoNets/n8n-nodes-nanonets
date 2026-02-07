@@ -2,7 +2,7 @@
 
 This is an n8n community node for [Nanonets](https://nanonets.com) Document Extraction API.
 
-**Get 10,000 free credits** when you sign up at [nanonets.com](https://docstrange.nanonets.com/app).
+**Get 10,000 free credits** when you sign up at [docstrange.nanonets.com/app](https://docstrange.nanonets.com/app).
 
 ## Features
 
@@ -54,7 +54,7 @@ npm install n8n-nodes-nanonets
 
 ## Credentials
 
-1. Sign up at [nanonets.com](https://docstrange.nanonets.com/app)
+1. Sign up at [docstrange.nanonets.com/app](https://docstrange.nanonets.com/app)
 2. Get your API key from the dashboard
 3. In n8n, create new credentials for "Nanonets API"
 4. Enter your API key
